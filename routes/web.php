@@ -18,6 +18,10 @@ Route::get('stores', function () {
     return Inertia::render('stores');
 })->middleware(['auth', 'verified'])->name('stores');
 
+Route::get('reports', [App\Http\Controllers\ReportController::class, 'index'])
+    ->middleware(['auth', 'verified'])
+    ->name('reports');
+
 // YoSmart API Routes
 Route::middleware(['auth', 'verified'])->prefix('api/yosmart')->group(function () {
     Route::get('/devices', [App\Http\Controllers\YoSmartController::class, 'listDevices'])->name('yosmart.devices.list');
@@ -26,6 +30,20 @@ Route::middleware(['auth', 'verified'])->prefix('api/yosmart')->group(function (
     Route::get('/device/states', [App\Http\Controllers\YoSmartController::class, 'allDeviceStates'])->name('yosmart.device.states.all');
     Route::post('/device/control', [App\Http\Controllers\YoSmartController::class, 'controlDevice'])->name('yosmart.device.control');
     Route::get('/health', [App\Http\Controllers\YoSmartController::class, 'health'])->name('yosmart.health');
+});
+
+// Report Routes (auth'd, consumed by the React reports page)
+Route::middleware(['auth', 'verified'])->prefix('api/reports')->group(function () {
+    Route::post('/snapshot', [App\Http\Controllers\ReportController::class, 'snapshot'])->name('reports.snapshot');
+    Route::get('/data', [App\Http\Controllers\ReportController::class, 'data'])->name('reports.data');
+    Route::get('/history', [App\Http\Controllers\ReportController::class, 'history'])->name('reports.history');
+
+    // Snapshot schedule management
+    Route::get('/schedules', [App\Http\Controllers\ScheduleController::class, 'index'])->name('reports.schedules.index');
+    Route::post('/schedules', [App\Http\Controllers\ScheduleController::class, 'upsert'])->name('reports.schedules.upsert');
+    Route::patch('/schedules/{schedule}/toggle', [App\Http\Controllers\ScheduleController::class, 'toggle'])->name('reports.schedules.toggle');
+    Route::delete('/schedules/{schedule}', [App\Http\Controllers\ScheduleController::class, 'destroy'])->name('reports.schedules.destroy');
+    Route::post('/schedules/{schedule}/run-now', [App\Http\Controllers\ScheduleController::class, 'runNow'])->name('reports.schedules.runNow');
 });
 
 // Store Management Routes (admin, behind auth)
