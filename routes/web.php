@@ -38,12 +38,17 @@ Route::middleware(['auth', 'verified'])->prefix('api/reports')->group(function (
     Route::get('/data', [App\Http\Controllers\ReportController::class, 'data'])->name('reports.data');
     Route::get('/history', [App\Http\Controllers\ReportController::class, 'history'])->name('reports.history');
 
-    // Snapshot schedule management
+    // Snapshot schedule management (single global schedule)
     Route::get('/schedules', [App\Http\Controllers\ScheduleController::class, 'index'])->name('reports.schedules.index');
     Route::post('/schedules', [App\Http\Controllers\ScheduleController::class, 'upsert'])->name('reports.schedules.upsert');
-    Route::patch('/schedules/{schedule}/toggle', [App\Http\Controllers\ScheduleController::class, 'toggle'])->name('reports.schedules.toggle');
-    Route::delete('/schedules/{schedule}', [App\Http\Controllers\ScheduleController::class, 'destroy'])->name('reports.schedules.destroy');
-    Route::post('/schedules/{schedule}/run-now', [App\Http\Controllers\ScheduleController::class, 'runNow'])->name('reports.schedules.runNow');
+    Route::patch('/schedules/toggle', [App\Http\Controllers\ScheduleController::class, 'toggle'])->name('reports.schedules.toggle');
+    Route::post('/schedules/run-now', [App\Http\Controllers\ScheduleController::class, 'runNow'])->name('reports.schedules.runNow');
+});
+
+// App Settings Routes
+Route::middleware(['auth', 'verified'])->prefix('api/settings')->group(function () {
+    Route::get('/temperature-unit', [App\Http\Controllers\AppSettingController::class, 'temperatureUnit'])->name('settings.temperature-unit');
+    Route::put('/temperature-unit', [App\Http\Controllers\AppSettingController::class, 'updateTemperatureUnit'])->name('settings.temperature-unit.update');
 });
 
 // Store Management Routes (admin, behind auth)

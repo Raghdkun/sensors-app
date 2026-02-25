@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\YoSmartController;
+use App\Models\AppSetting;
 use App\Models\SensorReport;
 use App\Models\Store;
 use Illuminate\Http\JsonResponse;
@@ -132,7 +133,8 @@ class PublicReportController extends Controller
                 'device_name' => $device->device_name,
                 'device_type' => $device->device_type,
                 'online'      => $report->online,
-                'temperature' => $report->temperature,
+                'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, AppSetting::temperatureUnit()),
+                'temperature_unit' => AppSetting::temperatureUnit(),
                 'humidity'    => $report->humidity,
                 'battery'     => $report->battery_level,
                 'alarm'       => $report->alarm,
@@ -143,11 +145,12 @@ class PublicReportController extends Controller
         }
 
         return response()->json([
-            'success'    => true,
-            'store'      => $this->storePayload($store),
-            'snapshot'   => $snapshot,
-            'count'      => count($snapshot),
-            'captured_at' => now()->toIso8601String(),
+            'success'          => true,
+            'store'            => $this->storePayload($store),
+            'temperature_unit' => AppSetting::temperatureUnit(),
+            'snapshot'         => $snapshot,
+            'count'            => count($snapshot),
+            'captured_at'      => now()->toIso8601String(),
         ]);
     }
 
@@ -188,13 +191,17 @@ class PublicReportController extends Controller
             $query->forDevice($deviceId);
         }
 
+        // Temperature unit conversion SQL expression
+        $targetUnit = AppSetting::temperatureUnit();
+        $t = AppSetting::tempSqlExpr($targetUnit);
+
         // Time-series
         $timeSeries = (clone $query)
             ->select([
                 DB::raw($this->dateFormat('recorded_at', $groupFormat) . ' as time_bucket'),
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('MIN(humidity) as min_humidity'),
                 DB::raw('MAX(humidity) as max_humidity'),
@@ -209,9 +216,9 @@ class PublicReportController extends Controller
             ->select([
                 'device_id',
                 'device_name',
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('MIN(humidity) as min_humidity'),
                 DB::raw('MAX(humidity) as max_humidity'),
@@ -225,9 +232,9 @@ class PublicReportController extends Controller
         // Overall
         $overall = (clone $query)
             ->select([
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('COUNT(*) as total_readings'),
                 DB::raw('SUM(CASE WHEN alarm = ' . $this->boolLiteral(true) . ' THEN 1 ELSE 0 END) as total_alarms'),
@@ -236,10 +243,11 @@ class PublicReportController extends Controller
             ->first();
 
         $response = [
-            'success' => true,
-            'store'   => $this->storePayload($store),
-            'period'  => $period,
-            'range'   => [
+            'success'          => true,
+            'store'            => $this->storePayload($store),
+            'period'           => $period,
+            'temperature_unit' => $targetUnit,
+            'range'            => [
                 'from' => $from->toIso8601String(),
                 'to'   => $to->toIso8601String(),
             ],
@@ -296,10 +304,19 @@ class PublicReportController extends Controller
         $perPage = min((int) $request->input('per_page', 50), 200);
         $paginated = $query->paginate($perPage);
 
+        $targetUnit = AppSetting::temperatureUnit();
+
+        $paginated->getCollection()->transform(function ($report) use ($targetUnit) {
+            $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
+            $report->temperature_unit = $targetUnit;
+            return $report;
+        });
+
         return response()->json([
-            'success' => true,
-            'store'   => $this->storePayload($store),
-            'reports' => $paginated,
+            'success'          => true,
+            'store'            => $this->storePayload($store),
+            'temperature_unit' => $targetUnit,
+            'reports'          => $paginated,
         ]);
     }
 
@@ -329,6 +346,7 @@ class PublicReportController extends Controller
                 'device_name',
                 'device_type',
                 'temperature',
+                'temperature_unit',
                 'humidity',
                 'state',
                 'recorded_at',
@@ -336,6 +354,14 @@ class PublicReportController extends Controller
             ->orderByDesc('recorded_at')
             ->limit(100)
             ->get();
+
+        $targetUnit = AppSetting::temperatureUnit();
+
+        $alarms->transform(function ($report) use ($targetUnit) {
+            $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
+            $report->temperature_unit = $targetUnit;
+            return $report;
+        });
 
         $offlineEvents = SensorReport::forStore($store->id)
             ->between($from, $to)
@@ -351,8 +377,9 @@ class PublicReportController extends Controller
             ->get();
 
         return response()->json([
-            'success' => true,
-            'store'   => $this->storePayload($store),
+            'success'          => true,
+            'store'            => $this->storePayload($store),
+            'temperature_unit' => $targetUnit,
             'range'   => [
                 'from' => $from->toIso8601String(),
                 'to'   => $to->toIso8601String(),

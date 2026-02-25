@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { usePage } from '@inertiajs/react';
 import {
   Thermometer,
   Droplets,
@@ -31,10 +32,29 @@ function cToF(c: number): number {
   return c * 9 / 5 + 32;
 }
 
-/** Format temperature based on device mode (f = Fahrenheit raw, c = Celsius) */
-function formatTemp(value: number, mode?: string): string {
-  if (mode === 'c') return `${value.toFixed(1)}°C`;
-  return `${value.toFixed(1)}°`;
+/** Convert Fahrenheit to Celsius */
+function fToC(f: number): number {
+  return (f - 32) * 5 / 9;
+}
+
+/**
+ * Convert a temperature value from the device's native mode to the
+ * target display unit, then format it.
+ */
+function formatTemp(value: number, mode?: string, targetUnit: string = 'F'): string {
+  const target = targetUnit.toUpperCase();
+  const source = (mode ?? 'f').toLowerCase();
+  let converted = value;
+
+  if (source === 'c' && target === 'F') {
+    converted = cToF(value);
+  } else if (source === 'f' && target === 'C') {
+    converted = fToC(value);
+  } else if (source === 'c' && target === 'C') {
+    converted = value;
+  }
+
+  return `${converted.toFixed(1)}°${target}`;
 }
 
 /** Pretty-print a UTC ISO timestamp as local time */
@@ -73,9 +93,9 @@ function batteryPercent(level: number): string {
   return map[level] ?? `${level}`;
 }
 
-/** Determine temperature colour class */
+/** Determine temperature colour class (always compares in °F) */
 function tempColor(value: number, mode?: string): string {
-  const f = mode === 'c' ? cToF(value) : value;
+  const f = (mode ?? 'f').toLowerCase() === 'c' ? cToF(value) : value;
   if (f <= 0) return 'text-blue-600 dark:text-blue-400';
   if (f <= 32) return 'text-sky-600 dark:text-sky-400';
   if (f <= 60) return 'text-teal-600 dark:text-teal-400';
@@ -224,10 +244,12 @@ function THSensorCard({
   device,
   status,
   onRefresh,
+  targetUnit,
 }: {
   device: any;
   status: { loading: boolean; state: any; error: string | null; lastUpdated: Date | null };
   onRefresh: () => void;
+  targetUnit: string;
 }) {
   const data = status.state;
   const online = data?.online;
@@ -242,8 +264,8 @@ function THSensorCard({
   const hasAlarm =
     alarm && (alarm.lowBattery || alarm.lowTemp || alarm.highTemp || alarm.lowHumidity || alarm.highHumidity);
 
-  const isFreezer = temperature !== undefined && temperature <= 32 && mode !== 'c';
-  const isFreezerC = temperature !== undefined && temperature <= 0 && mode === 'c';
+  const isFreezer = temperature !== undefined && temperature <= 32 && (mode ?? 'f').toLowerCase() !== 'c';
+  const isFreezerC = temperature !== undefined && temperature <= 0 && (mode ?? 'f').toLowerCase() === 'c';
 
   return (
     <Card className="group overflow-hidden transition-shadow hover:shadow-md">
@@ -325,7 +347,7 @@ function THSensorCard({
                   Temperature
                 </p>
                 <p className={`text-3xl font-bold tabular-nums leading-none ${tempColor(temperature, mode)}`}>
-                  {formatTemp(temperature, mode)}
+                  {formatTemp(temperature, mode, targetUnit)}
                 </p>
               </div>
               {humidity !== undefined && humidity > 0 && (
@@ -378,7 +400,7 @@ function THSensorCard({
             {/* Temp limits (subtle) */}
             {state?.tempLimit && state.tempLimit.min > -999 && (
               <div className="rounded-md bg-muted/50 px-3 py-1.5 text-[11px] text-muted-foreground">
-                Temp range: {state.tempLimit.min}° — {state.tempLimit.max}°
+                Temp range: {formatTemp(state.tempLimit.min, mode, targetUnit)} — {formatTemp(state.tempLimit.max, mode, targetUnit)}
               </div>
             )}
           </>
@@ -622,14 +644,16 @@ function DeviceCardDispatcher({
   device,
   status,
   onRefresh,
+  targetUnit,
 }: {
   device: any;
   status: any;
   onRefresh: () => void;
+  targetUnit: string;
 }) {
   switch (device.type) {
     case 'THSensor':
-      return <THSensorCard device={device} status={status} onRefresh={onRefresh} />;
+      return <THSensorCard device={device} status={status} onRefresh={onRefresh} targetUnit={targetUnit} />;
     case 'Hub':
       return <HubCard device={device} status={status} onRefresh={onRefresh} />;
     default:
@@ -640,6 +664,8 @@ function DeviceCardDispatcher({
 // ─── Main Component ───────────────────────────────────────────────────
 
 export function YoSmartDeviceList() {
+  const { temperatureUnit } = usePage().props;
+  const targetUnit = temperatureUnit ?? 'F';
   const {
     devices,
     deviceStates,
@@ -762,6 +788,7 @@ export function YoSmartDeviceList() {
                 device={device}
                 status={getDeviceStatus(device.deviceId)}
                 onRefresh={() => getState(device.deviceId, device.token, device.type)}
+                targetUnit={targetUnit}
               />
             ))}
           </div>
@@ -781,6 +808,7 @@ export function YoSmartDeviceList() {
                 device={device}
                 status={getDeviceStatus(device.deviceId)}
                 onRefresh={() => getState(device.deviceId, device.token, device.type)}
+                targetUnit={targetUnit}
               />
             ))}
           </div>

@@ -33,7 +33,7 @@ export default function Reports({ stores }: Props) {
             <Head title="Sensor Reports" />
             <div className="flex h-full flex-1 flex-col gap-6 overflow-x-auto rounded-xl p-4 md:p-6">
                 <ReportsDashboard stores={stores} />
-                <SnapshotScheduleManager stores={stores} />
+                <SnapshotScheduleManager />
             </div>
         </AppLayout>
     );

@@ -12,126 +12,122 @@ class ScheduleController extends Controller
     /**
      * GET /api/reports/schedules
      *
-     * List all snapshot schedules with their stores.
+     * Return the single global schedule (creates it if it does not exist yet).
      */
     public function index(): JsonResponse
     {
-        $schedules = SnapshotSchedule::with('store:id,store_number,store_name,is_active')
-            ->orderBy('store_id')
-            ->get();
+        $schedule     = SnapshotSchedule::global();
+        $activeStores = Store::where('is_active', true)->count();
 
         return response()->json([
-            'success'   => true,
-            'schedules' => $schedules,
+            'success'      => true,
+            'schedule'     => $schedule,
+            'active_stores' => $activeStores,
         ]);
     }
 
     /**
      * POST /api/reports/schedules
      *
-     * Create or update a schedule for a store.
+     * Update the global schedule settings (interval + active state).
      */
     public function upsert(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'store_id'         => 'required|integer|exists:stores,id',
             'is_active'        => 'required|boolean',
             'interval_minutes' => 'required|integer|min:5|max:1440',
         ]);
 
-        $schedule = SnapshotSchedule::updateOrCreate(
-            ['store_id' => $validated['store_id']],
-            [
-                'is_active'        => $validated['is_active'],
-                'interval_minutes' => $validated['interval_minutes'],
-                // When activating, seed next_run_at so it runs on the next scheduler tick
-                'next_run_at'      => $validated['is_active'] ? now() : null,
-            ],
-        );
+        $schedule = SnapshotSchedule::global();
 
-        $schedule->load('store:id,store_number,store_name,is_active');
+        $schedule->update([
+            'is_active'        => $validated['is_active'],
+            'interval_minutes' => $validated['interval_minutes'],
+            // Seed next_run_at so the first tick fires immediately
+            'next_run_at'      => $validated['is_active'] ? now() : null,
+        ]);
 
         return response()->json([
             'success'  => true,
-            'schedule' => $schedule,
+            'schedule' => $schedule->fresh(),
         ]);
     }
 
     /**
-     * PATCH /api/reports/schedules/{schedule}/toggle
+     * PATCH /api/reports/schedules/toggle
      *
-     * Quick toggle on/off.
+     * Quick active / paused toggle.
      */
-    public function toggle(SnapshotSchedule $schedule): JsonResponse
+    public function toggle(): JsonResponse
     {
+        $schedule = SnapshotSchedule::global();
+
         $schedule->update([
             'is_active'   => ! $schedule->is_active,
             'next_run_at' => ! $schedule->is_active ? now() : null,
         ]);
 
-        $schedule->load('store:id,store_number,store_name,is_active');
-
         return response()->json([
             'success'  => true,
-            'schedule' => $schedule,
+            'schedule' => $schedule->fresh(),
         ]);
     }
 
     /**
-     * DELETE /api/reports/schedules/{schedule}
-     */
-    public function destroy(SnapshotSchedule $schedule): JsonResponse
-    {
-        $schedule->delete();
-
-        return response()->json([
-            'success' => true,
-        ]);
-    }
-
-    /**
-     * POST /api/reports/schedules/{schedule}/run-now
+     * POST /api/reports/schedules/run-now
      *
-     * Force an immediate capture regardless of schedule timing.
+     * Force an immediate capture for ALL active stores right now.
      */
-    public function runNow(SnapshotSchedule $schedule): JsonResponse
+    public function runNow(): JsonResponse
     {
-        $store = $schedule->store;
+        $schedule = SnapshotSchedule::global();
 
-        if (! $store || ! $store->is_active) {
+        $activeStores = Store::where('is_active', true)->with('devices')->get();
+
+        if ($activeStores->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Store is inactive.',
+                'error'   => 'No active stores found.',
             ], 422);
         }
 
         try {
-            // Reuse the snapshot logic from ReportController
             $reportController = app(ReportController::class);
+            $total            = 0;
+            $errors           = [];
 
-            $fakeRequest = Request::create('/api/reports/snapshot', 'POST', [
-                'store_id' => $store->id,
-            ]);
-
-            $response    = $reportController->snapshot($fakeRequest);
-            $data        = json_decode($response->getContent(), true);
-
-            if ($data['success'] ?? false) {
-                $schedule->markRanSuccessfully();
-
-                return response()->json([
-                    'success' => true,
-                    'message' => "Captured {$data['count']} device(s).",
-                    'count'   => $data['count'],
+            foreach ($activeStores as $store) {
+                $fakeRequest = Request::create('/api/reports/snapshot', 'POST', [
+                    'store_id' => $store->id,
                 ]);
+
+                $response = $reportController->snapshot($fakeRequest);
+                $data     = json_decode($response->getContent(), true);
+
+                if ($data['success'] ?? false) {
+                    $total += $data['count'];
+                } else {
+                    $errors[] = "{$store->store_name}: " . ($data['error'] ?? 'failed');
+                }
             }
 
-            $schedule->markFailed($data['error'] ?? 'Unknown error');
+            if (! empty($errors)) {
+                $schedule->markFailed(implode('; ', $errors));
+
+                return response()->json([
+                    'success' => false,
+                    'error'   => implode('; ', $errors),
+                    'count'   => $total,
+                ], 207);
+            }
+
+            $schedule->markRanSuccessfully();
 
             return response()->json([
-                'success' => false,
-                'error'   => $data['error'] ?? 'Snapshot failed.',
-            ], 500);
+                'success' => true,
+                'message' => "Captured {$total} device(s) across {$activeStores->count()} stores.",
+                'count'   => $total,
+            ]);
         } catch (\Throwable $e) {
             $schedule->markFailed($e->getMessage());
 

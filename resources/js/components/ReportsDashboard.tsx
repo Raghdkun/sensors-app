@@ -12,6 +12,7 @@ import {
     WifiOff,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { usePage } from '@inertiajs/react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -174,7 +175,7 @@ function MiniBar({
     );
 }
 
-function TimeSeriesTable({ data }: { data: TimeSeriesBucket[] }) {
+function TimeSeriesTable({ data, unit }: { data: TimeSeriesBucket[]; unit: string }) {
     if (data.length === 0) {
         return (
             <div className="text-muted-foreground flex flex-col items-center gap-2 py-12 text-sm">
@@ -203,12 +204,12 @@ function TimeSeriesTable({ data }: { data: TimeSeriesBucket[] }) {
                         <tr key={row.time_bucket} className="hover:bg-muted/50 border-b transition-colors">
                             <td className="px-3 py-2 font-mono text-xs">{row.time_bucket}</td>
                             <td className={`px-3 py-2 font-semibold ${tempColor(row.avg_temp)}`}>
-                                {formatNum(row.avg_temp)}°
+                                {formatNum(row.avg_temp)}°{unit}
                             </td>
                             <td className="text-muted-foreground px-3 py-2 text-xs">
-                                <span className="text-blue-500">{formatNum(row.min_temp)}°</span>
+                                <span className="text-blue-500">{formatNum(row.min_temp)}°{unit}</span>
                                 {' / '}
-                                <span className="text-red-500">{formatNum(row.max_temp)}°</span>
+                                <span className="text-red-500">{formatNum(row.max_temp)}°{unit}</span>
                             </td>
                             <td className={`px-3 py-2 font-semibold ${humidityColor(row.avg_humidity)}`}>
                                 {formatNum(row.avg_humidity)}%
@@ -227,7 +228,7 @@ function TimeSeriesTable({ data }: { data: TimeSeriesBucket[] }) {
     );
 }
 
-function DeviceSummaryCards({ devices }: { devices: DeviceSummary[] }) {
+function DeviceSummaryCards({ devices, unit }: { devices: DeviceSummary[]; unit: string }) {
     if (devices.length === 0) {
         return (
             <div className="text-muted-foreground flex flex-col items-center gap-2 py-12 text-sm">
@@ -261,14 +262,14 @@ function DeviceSummaryCards({ devices }: { devices: DeviceSummary[] }) {
                             </div>
                             <div className="flex items-baseline gap-3">
                                 <span className={`text-lg font-bold ${tempColor(device.avg_temp)}`}>
-                                    {formatNum(device.avg_temp)}°
+                                    {formatNum(device.avg_temp)}°{unit}
                                 </span>
                                 <span className="text-muted-foreground text-xs">
                                     <ArrowDown className="inline size-3 text-blue-500" />
-                                    {formatNum(device.min_temp)}°
+                                    {formatNum(device.min_temp)}°{unit}
                                     {' '}
                                     <ArrowUp className="inline size-3 text-red-500" />
-                                    {formatNum(device.max_temp)}°
+                                    {formatNum(device.max_temp)}°{unit}
                                 </span>
                             </div>
                         </div>
@@ -323,6 +324,7 @@ function DeviceSummaryCards({ devices }: { devices: DeviceSummary[] }) {
 // ─── Main Component ─────────────────────────────────────────────────
 
 export function ReportsDashboard({ stores }: Props) {
+    const { temperatureUnit: sharedUnit } = usePage().props;
     const [selectedStoreId, setSelectedStoreId] = useState<number | null>(
         stores.length > 0 ? stores[0].id : null,
     );
@@ -332,6 +334,8 @@ export function ReportsDashboard({ stores }: Props) {
     const [snapshotting, setSnapshotting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastFetch, setLastFetch] = useState<Date | null>(null);
+    const [tempUnit, setTempUnit] = useState<'C' | 'F'>(sharedUnit ?? 'F');
+    const [savingUnit, setSavingUnit] = useState(false);
 
     const fetchReport = useCallback(async () => {
         if (!selectedStoreId) return;
@@ -419,6 +423,32 @@ export function ReportsDashboard({ stores }: Props) {
         fetchReport();
     }, [fetchReport]);
 
+    const toggleTempUnit = async () => {
+        const newUnit = tempUnit === 'C' ? 'F' : 'C';
+        setSavingUnit(true);
+        try {
+            const response = await fetch('/api/settings/temperature-unit', {
+                method: 'PUT',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-XSRF-TOKEN': getCsrfCookie(),
+                },
+                credentials: 'include',
+                body: JSON.stringify({ unit: newUnit }),
+            });
+            if (response.ok) {
+                setTempUnit(newUnit);
+                // Re-fetch report data with new unit
+                await fetchReport();
+            }
+        } catch {
+            // silently fail
+        } finally {
+            setSavingUnit(false);
+        }
+    };
+
     const selectedStore = stores.find((s) => s.id === selectedStoreId);
 
     if (stores.length === 0) {
@@ -474,6 +504,22 @@ export function ReportsDashboard({ stores }: Props) {
                         </button>
                     ))}
                 </div>
+
+                {/* Temperature unit toggle */}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleTempUnit}
+                    disabled={savingUnit}
+                    className="gap-1.5"
+                >
+                    {savingUnit ? (
+                        <Spinner className="size-3.5" />
+                    ) : (
+                        <Thermometer className="size-3.5" />
+                    )}
+                    °{tempUnit === 'C' ? 'C → °F' : 'F → °C'}
+                </Button>
 
                 {/* Actions */}
                 <div className="ml-auto flex items-center gap-2">
@@ -571,8 +617,8 @@ export function ReportsDashboard({ stores }: Props) {
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                         <StatCard
                             label="Avg Temperature"
-                            value={`${formatNum(reportData.overall.avg_temp)}°`}
-                            subtitle={`${formatNum(reportData.overall.min_temp)}° – ${formatNum(reportData.overall.max_temp)}°`}
+                            value={`${formatNum(reportData.overall.avg_temp)}°${tempUnit}`}
+                            subtitle={`${formatNum(reportData.overall.min_temp)}°${tempUnit} – ${formatNum(reportData.overall.max_temp)}°${tempUnit}`}
                             icon={Thermometer}
                             colorClass={tempColor(reportData.overall.avg_temp)}
                         />
@@ -619,14 +665,14 @@ export function ReportsDashboard({ stores }: Props) {
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <TimeSeriesTable data={reportData.time_series} />
+                            <TimeSeriesTable data={reportData.time_series} unit={tempUnit} />
                         </CardContent>
                     </Card>
 
                     {/* Device Summary */}
                     <div>
                         <h3 className="mb-3 text-lg font-semibold">Per-Device Summary</h3>
-                        <DeviceSummaryCards devices={reportData.device_summary} />
+                        <DeviceSummaryCards devices={reportData.device_summary} unit={tempUnit} />
                     </div>
                 </>
             )}

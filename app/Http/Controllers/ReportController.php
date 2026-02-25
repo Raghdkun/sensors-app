@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AppSetting;
 use App\Models\SensorReport;
 use App\Models\Store;
 use App\Models\StoreDevice;
@@ -153,10 +154,19 @@ class ReportController extends Controller
             $reports[] = $report;
         }
 
+        $targetUnit = AppSetting::temperatureUnit();
+
+        $converted = collect($reports)->map(function ($r) use ($targetUnit) {
+            $r->temperature = AppSetting::convertTemp($r->temperature, $r->temperature_unit, $targetUnit);
+            $r->temperature_unit = $targetUnit;
+            return $r;
+        });
+
         return response()->json([
-            'success'  => true,
-            'count'    => count($reports),
-            'snapshot' => $reports,
+            'success'          => true,
+            'count'            => count($reports),
+            'temperature_unit' => $targetUnit,
+            'snapshot'         => $converted,
         ]);
     }
 
@@ -208,13 +218,17 @@ class ReportController extends Controller
             $query->forDevice($validated['device_id']);
         }
 
+        // Temperature unit conversion SQL expression
+        $targetUnit = AppSetting::temperatureUnit();
+        $t = AppSetting::tempSqlExpr($targetUnit);
+
         // ─── Aggregated time-series ──────────────────────────────────
         $timeSeries = (clone $query)
             ->select([
                 DB::raw($this->dateFormat('recorded_at', $groupFormat) . ' as time_bucket'),
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('MIN(humidity) as min_humidity'),
                 DB::raw('MAX(humidity) as max_humidity'),
@@ -229,9 +243,9 @@ class ReportController extends Controller
             ->select([
                 'device_id',
                 'device_name',
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('MIN(humidity) as min_humidity'),
                 DB::raw('MAX(humidity) as max_humidity'),
@@ -245,9 +259,9 @@ class ReportController extends Controller
         // ─── Overall summary ─────────────────────────────────────────
         $overall = (clone $query)
             ->select([
-                DB::raw('AVG(temperature) as avg_temp'),
-                DB::raw('MIN(temperature) as min_temp'),
-                DB::raw('MAX(temperature) as max_temp'),
+                DB::raw("AVG({$t}) as avg_temp"),
+                DB::raw("MIN({$t}) as min_temp"),
+                DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('COUNT(*) as total_readings'),
                 DB::raw('SUM(CASE WHEN alarm = ' . $this->boolLiteral(true) . ' THEN 1 ELSE 0 END) as total_alarms'),
@@ -256,9 +270,10 @@ class ReportController extends Controller
             ->first();
 
         return response()->json([
-            'success' => true,
-            'period'  => $period,
-            'range'   => [
+            'success'          => true,
+            'period'           => $period,
+            'temperature_unit' => $targetUnit,
+            'range'            => [
                 'from' => $from->toIso8601String(),
                 'to'   => $to->toIso8601String(),
             ],
@@ -294,9 +309,18 @@ class ReportController extends Controller
 
         $paginated = $query->paginate($validated['per_page'] ?? 25);
 
+        $targetUnit = AppSetting::temperatureUnit();
+
+        $paginated->getCollection()->transform(function ($report) use ($targetUnit) {
+            $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
+            $report->temperature_unit = $targetUnit;
+            return $report;
+        });
+
         return response()->json([
-            'success' => true,
-            'reports' => $paginated,
+            'success'          => true,
+            'temperature_unit' => $targetUnit,
+            'reports'          => $paginated,
         ]);
     }
 }
